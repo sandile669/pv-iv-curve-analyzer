@@ -1,5 +1,6 @@
 """Template-preserving Word reports (.docx) only."""
 import io
+from copy import deepcopy
 from pathlib import Path
 from docx import Document
 from docx.shared import Inches
@@ -7,7 +8,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import RGBColor
 
-TEMPLATE = Path(__file__).resolve().parent / 'ABC_Solar_IV_Curve_Template.docx'
+TEMPLATE = Path(__file__).resolve().parent / 'templates' / 'ABC_Solar_IV_Curve_Template.docx'
 
 
 def _replace_paragraph(p, old, new):
@@ -79,9 +80,19 @@ def word_report(project, block, inverter, rows, figures, stc_by_string=None, inv
             (3,1):str(len(rows)),(0,3):equipment,(1,3):equipment_serial,
             (2,3):calibration_certificate,(3,3):calibration_expiry}
     for (r,c),v in values.items(): _cell_text(info.cell(r,c),v)
-    # Existing template provides nine two-column chart rows for strings 1-18.
-    for s in range(1,19):
-        cell=doc.tables[2+(s-1)//2].cell(0,(s-1)%2)
+    # The supplied template has 18 chart slots; duplicate its original styled
+    # chart table for strings 19-21, placing new tables before the summary.
+    max_string=max((int(r['String']) for r in rows), default=18)
+    max_string=min(max_string,21)
+    chart_tables=list(doc.tables[2:11])
+    summary=doc.tables[11]
+    for _ in range((max(0,max_string-18)+1)//2):
+        new_tbl=deepcopy(doc.tables[10]._tbl)
+        summary._tbl.addprevious(new_tbl)
+        from docx.table import Table
+        chart_tables.append(Table(new_tbl,doc._body))
+    for s in range(1,max_string+1):
+        cell=chart_tables[(s-1)//2].cell(0,(s-1)%2)
         _clear_cell_picture(cell)
         for p in cell.paragraphs:
             for run in p.runs: run.text=''
@@ -91,10 +102,15 @@ def word_report(project, block, inverter, rows, figures, stc_by_string=None, inv
             status=next((r.get('Result','Missing / Not Tested') for r in rows if r.get('String')==s),'Not Applicable')
             cell.paragraphs[0].add_run(f'String {s}\n{status}')
     # Retain summary table style, widths, borders and merged result cells.
-    summary=doc.tables[11]
+    # Extend the two-row-per-string summary while preserving cell merges,
+    # shading, widths, borders and typography from the original last pair.
+    summary=doc.tables[-1]
+    for _ in range(max(0,max_string-18)):
+        summary._tbl.append(deepcopy(summary.rows[35]._tr))
+        summary._tbl.append(deepcopy(summary.rows[36]._tr))
     keys=['Pmax (W)','Voc (V)','Isc (A)','Vm (V)','Im (A)','Irradiance (W/m²)','PV Temp (°C)','En Temp (°C)','Incline','FF (%)']
     by_num={int(r['String']):r for r in rows}
-    for s in range(1,19):
+    for s in range(1,max_string+1):
         r=by_num.get(s,{'Result':'Not Applicable'})
         row_idx=2*s-1
         cells=summary.rows[row_idx].cells
