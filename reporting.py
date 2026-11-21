@@ -8,7 +8,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import RGBColor
 
-TEMPLATE = Path(__file__).resolve().parent / 'templates' / 'ABC_Solar_IV_Curve_Template.docx'
+TEMPLATE = Path(__file__).resolve().parent / 'ABC_Solar_IV_Curve_Template.docx'
 
 
 def _replace_paragraph(p, old, new):
