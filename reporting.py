@@ -8,7 +8,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import RGBColor
 
-TEMPLATE = Path(__file__).resolve().parent / 'ABC_Solar_IV_Curve_Template.docx'
+TEMPLATE_DIR = Path(__file__).resolve().parent / 'templates'
 
 
 def _replace_paragraph(p, old, new):
@@ -65,49 +65,46 @@ def _set_result_shading(cell, result):
 
 
 def word_report(project, block, inverter, rows, figures, stc_by_string=None, inverter_serial='', equipment='MULTI-TESTER (IV-CURVE)', equipment_serial='BOB01890', calibration_certificate='129647', calibration_expiry='18 August 2027', test_date=''):
-    doc=Document(TEMPLATE)
+    max_string = len(rows)
+    if max_string not in (15, 18, 21) or {int(r['String']) for r in rows} != set(range(1, max_string+1)):
+        raise ValueError('Expected exactly 15, 18 or 21 sequential string records, including cut/missing strings.')
+    template = TEMPLATE_DIR / f'IV_Curve_Template_{max_string}.docx'
+    if not template.is_file():
+        raise FileNotFoundError(f'Missing template: {template.name}; upload the templates folder to GitHub.')
+    doc=Document(template)
     stc_by_string=stc_by_string or {}
     # Keep original cover page, approval table, header, footer, logos and page breaks.
     for p in doc.paragraphs:
-        for old,new in [('Block 2 - Inverter 7',f'Block {block} - Inverter {inverter}'),
-                        ('Block 2 · Inverter 7',f'Block {block} · Inverter {inverter}'),
-                        ('Block 2 · Inverter 7·',f'Block {block} · Inverter {inverter} ·'),
+        if max_string == 15: _replace_paragraph(p, "Strings 13–18", "Strings 13–15")
+        for old,new in [('Block 9 - Inverter 28',f'Block {block} - Inverter {inverter}'),
+                        ('Block 9 · Inverter 28',f'Block {block} · Inverter {inverter}'),
+                        ('Block 9 · Inverter 28·',f'Block {block} · Inverter {inverter} ·'),
                         ('Virginia Solar Park 240MW',project),
-                        ('2026-10-21',test_date or '')]:
+                        ('2026-10-22',test_date or '')]:
             _replace_paragraph(p,old,new)
     info=doc.tables[1]
     values={(0,1):f'BLOCK {block}',(1,1):f'INV {inverter}',(2,1):inverter_serial,
             (3,1):str(len(rows)),(0,3):equipment,(1,3):equipment_serial,
             (2,3):calibration_certificate,(3,3):calibration_expiry}
     for (r,c),v in values.items(): _cell_text(info.cell(r,c),v)
-    # The supplied template has 18 chart slots; duplicate its original styled
-    # chart table for strings 19-21, placing new tables before the summary.
-    max_string=max((int(r['String']) for r in rows), default=18)
-    max_string=min(max_string,21)
-    chart_tables=list(doc.tables[2:11])
-    summary=doc.tables[11]
-    for _ in range((max(0,max_string-18)+1)//2):
-        new_tbl=deepcopy(doc.tables[10]._tbl)
-        summary._tbl.addprevious(new_tbl)
-        from docx.table import Table
-        chart_tables.append(Table(new_tbl,doc._body))
-    for s in range(1,max_string+1):
-        cell=chart_tables[(s-1)//2].cell(0,(s-1)%2)
+    # Traverse existing graph cells in row-major order, including the two-row final table in the 21-string template.
+    summary = doc.tables[-1]
+    slots = [cell for table in doc.tables[2:-1] for row in table.rows for cell in row.cells]
+    if len(summary.rows) != 2*max_string+1 or len(slots) != max_string + max_string%2:
+        raise ValueError('Template layout does not match selected string count.')
+    by_num = {int(r['String']): r for r in rows}
+    for s, cell in enumerate(slots, 1):
+        drawings = cell._element.xpath('.//wp:extent')
+        width = int(drawings[0].get('cx')) if drawings else Inches(3.15)
+        height = int(drawings[0].get('cy')) if drawings else Inches(2.07)
         _clear_cell_picture(cell)
         for p in cell.paragraphs:
             for run in p.runs: run.text=''
-        if s in figures:
-            cell.paragraphs[0].add_run().add_picture(io.BytesIO(figures[s]),width=Inches(3.45))
+        if s > max_string: continue
+        if s in figures and by_num[s]['Result'] not in ('Strings Cut', 'Missing / Not Tested'):
+            cell.paragraphs[0].add_run().add_picture(io.BytesIO(figures[s]),width=width,height=height)
         else:
-            status=next((r.get('Result','Missing / Not Tested') for r in rows if r.get('String')==s),'Not Applicable')
-            cell.paragraphs[0].add_run(f'String {s}\n{status}')
-    # Retain summary table style, widths, borders and merged result cells.
-    # Extend the two-row-per-string summary while preserving cell merges,
-    # shading, widths, borders and typography from the original last pair.
-    summary=doc.tables[-1]
-    for _ in range(max(0,max_string-18)):
-        summary._tbl.append(deepcopy(summary.rows[35]._tr))
-        summary._tbl.append(deepcopy(summary.rows[36]._tr))
+            cell.paragraphs[0].add_run(f"String {s}\n{by_num[s]['Result']}")
     keys=['Pmax (W)','Voc (V)','Isc (A)','Vm (V)','Im (A)','Irradiance (W/m²)','PV Temp (°C)','En Temp (°C)','Incline','FF (%)']
     by_num={int(r['String']):r for r in rows}
     for s in range(1,max_string+1):
@@ -122,7 +119,7 @@ def word_report(project, block, inverter, rows, figures, stc_by_string=None, inv
         # Original summary has paired STC rows; never present original inverter's STC values as new measurements.
         stc=summary.rows[row_idx+1].cells
         _cell_text(stc[0],'STC')
-        stc_values=stc_by_string.get(s,{})
+        stc_values=stc_by_string.get(s,{}) if result not in ('Strings Cut','Missing / Not Tested') else {}
         for j,k in enumerate(keys,1): _cell_text(stc[j],_num(stc_values.get(k),3 if k=='FF (%)' else 2))
         # In merged Result cells, retain the classification and background styling.
         for run in cells[11].paragraphs[0].runs:

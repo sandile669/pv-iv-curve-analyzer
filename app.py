@@ -9,13 +9,13 @@ from raw_metadata import parse_raw_metadata
 
 st.set_page_config(page_title='PV IV Curve Analyzer',page_icon='☀️',layout='wide')
 st.title('☀️ PV String IV Curve Analyzer')
-st.caption('Version 1.8 • Inverter-level analysis • CSV → IV/PV plots → Word')
+st.caption('Version 1.9 • Inverter-level analysis • CSV → IV/PV plots → Word')
 with st.sidebar:
     st.header('Report settings')
     project=st.text_input('Project','Virginia Solar Project')
     block=st.text_input('Block','2')
     inverter=st.text_input('Inverter','12')
-    expected=st.number_input('Expected strings',min_value=1,max_value=21,value=18,help='Supports up to 21 strings; additional report rows are created automatically.')
+    expected=st.selectbox('Expected strings', [15,18,21], index=1, help='Automatically selects the matching Word template.')
     inverter_serial=st.text_input('Inverter Serial No.','',help='Entered into Test Information table in the Word report.')
     test_date=st.date_input('Test date').isoformat()
     with st.expander('Test equipment details'):
@@ -23,7 +23,7 @@ with st.sidebar:
         equipment_serial=st.text_input('Equipment serial number','BOB01890')
         calibration_certificate=st.text_input('Calibration certificate number','129647')
         calibration_expiry=st.text_input('Calibration expiry date','18 August 2027')
-    cut_text=st.text_input('Cut string numbers (comma separated)','',help='Leave blank when no strings are cut; e.g. 1,2,3 when applicable.')
+    cut_text=st.text_input('Cut string numbers (comma separated)','0',help='Use 0 when no strings are cut; e.g. 1,2,3 when applicable.')
     threshold=st.number_input('Abnormal if FF below (%)',value=75.0,min_value=0.0,max_value=100.0,step=0.5)
     st.info('The first version uses an inverter-specific upload. Do not mix files from different inverters.')
 raw_file=st.file_uploader('Raw Data Files (CSV or Excel, measured + STC metrics)',type=['csv','xlsx','xls'],help='Upload the tester summary export containing File Name and measured/STC fields.')
@@ -44,7 +44,7 @@ if raw_file:
     except Exception as exc: st.error(f'Raw Data Files import: {exc}')
 files=st.file_uploader('Upload CSV file(s), one per tested string',type=['csv'],accept_multiple_files=True)
 try:
-    cut={int(x.strip()) for x in cut_text.split(',') if x.strip()}
+    cut={int(x.strip()) for x in cut_text.split(',') if x.strip()} - {0}
 except ValueError:
     st.error('Cut string list must contain integers separated by commas.'); st.stop()
 if not files:
